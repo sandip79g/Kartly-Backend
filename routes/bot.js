@@ -62,12 +62,16 @@ const systemPrompt = [{
 }]
 
 router.post("/chat", async (req, res) => {
-    const { messages, user_id } = req.body;
+    const { messages, user_id, model_name } = req.body;
 
     if (!messages || messages.length === 0) {
         return res.status(400).json({
             message: "Messages are required."
         });
+    }
+
+    if (!model_name) {
+        model_name = "qwen3.5:0.8b";
     }
 
     try {
@@ -90,7 +94,7 @@ router.post("/chat", async (req, res) => {
             }
 
         let response = await ollama.chat({
-            model: "qwen3.5:4b",
+            model: model_name,
             messages: chatMessages,
             thinking: false,
             tools: [
@@ -148,7 +152,7 @@ router.post("/chat", async (req, res) => {
 
             // Ask Ollama to produce the final answer
             response = await ollama.chat({
-                model: "qwen3.5:4b",
+                model: model_name,
                 messages: chatMessages,
                 stream: false
             });
@@ -174,6 +178,22 @@ router.post("/chat", async (req, res) => {
 
         return res.status(500).json({
             message: "Error processing the chat request."
+        });
+    }
+});
+
+
+router.get("/history/:userId", (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        const history = db.prepare("SELECT role, message, created_at FROM chat_history WHERE user_id = ? ORDER BY created_at ASC limit 10").all(userId);
+
+        return res.status(200).json({ history });
+    } catch (error) {
+        console.error("Error fetching chat history:", error);
+        return res.status(500).json({
+            message: "Error fetching chat history."
         });
     }
 });
