@@ -187,9 +187,11 @@ router.get("/history/:userId", (req, res) => {
     const { userId } = req.params;
 
     try {
-        const history = db.prepare("SELECT role, message, created_at FROM chat_history WHERE user_id = ? ORDER BY created_at ASC limit 10").all(userId);
+        const history = db.prepare(
+            "SELECT role, message, created_at FROM chat_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+        ).all(userId);
 
-        return res.status(200).json({ history });
+        return res.status(200).json({ history: [...history].reverse() });
     } catch (error) {
         console.error("Error fetching chat history:", error);
         return res.status(500).json({

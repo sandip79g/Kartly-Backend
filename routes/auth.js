@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
 const { authenticate } = require("../middleware/auth");
-
+const nodemailer = require("nodemailer");
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "kartly-dev-secret";
 
@@ -14,6 +14,18 @@ function signToken(user) {
     { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
   );
 }
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: process.env.SMTP_PORT || 587,
+  auth: {
+    user: process.env.SMTP_USER || "sandeep.adhikari014@gmail.com",
+    pass: process.env.SMTP_PASS || "trgd rlix vckk nzsp"
+  }
+});
+
+
+
+
 
 function sanitize(user) {
   const { password, ...rest } = user;
@@ -54,6 +66,14 @@ router.post("/register", (req, res) => {
 
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(info.lastInsertRowid);
   const token = signToken(user);
+
+  transporter.sendMail({
+    from: process.env.SMTP_USER || "sandeep.adhikari014@gmail.com",
+    to: user.email,
+    subject: "Welcome to Kartly",
+    html: `<p>Hello ${user.username},</p><p>Welcome to Kartly! We're excited to have you on board.</p>`
+  });
+
   res.status(201).json({ token, user: sanitize(user) });
 });
 
