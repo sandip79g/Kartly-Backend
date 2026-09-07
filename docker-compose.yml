@@ -1,0 +1,26 @@
+services:
+  vector-db:
+    image: pgvector/pgvector:pg17
+    container_name: vector-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ecommerce_user
+      POSTGRES_PASSWORD: ecommerce_pass
+      POSTGRES_DB: shop_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - vector-db-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ecommerce_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  vector-db-data:
+
+  
+
+    

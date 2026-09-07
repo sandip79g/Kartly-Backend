@@ -1,6 +1,7 @@
 const express = require("express");
 const { Ollama } = require("ollama");
 const db = require("../db");
+const { searchKnowledge } = require("./rag");
 
 const router = express.Router();
 
@@ -23,43 +24,122 @@ const callTool = async (toolName, parameters, userId=null) => {
     if (toolName === "search_product") {
         const { searchText } = parameters;
         return await searchProduct(searchText);
+    } else if (toolName === "search_knowledge") {
+        const { query, limit } = parameters;
+        const response = await searchKnowledge({ query, limit });
+        return JSON.stringify(response);
     } else {
         throw new Error(`Tool ${toolName} not found.`);
     }
 }
 
-const systemPrompt = [{
-    "role": "system",
-    "content": `
-    You are a helpful assistant for the e-commerce platform Kartly.
+const systemPrompt = [
+    {
+        role: "system",
+        content: `
+You are Kartly AI, the customer assistant for the e-commerce platform Kartly.
 
-    Answer questions about products, orders, and general platform inquiries clearly and concisely.
+Your job is to help users with products, orders, customer support, and questions about Kartly.
 
-    Use your best judgment and avoid unnecessary clarification questions. If the user's request can reasonably be handled with a tool, use the tool directly.
+You have access to tools that contain the real and current information for Kartly.
 
-    You have access to a 'search_product' tool for searching products in the Kartly database.
+TOOL ROUTING RULES
 
-    Rules:
+1. PRODUCT QUESTIONS
+If the user wants to:
+- find a product
+- search for products
+- compare products
+- ask about prices
+- ask about product availability
+- ask about product specifications
+- request recommendations
 
-    * Use 'search_product' when the user is looking for, asking about, or comparing products.
-    * Infer reasonable search terms from the user's message instead of asking extra questions.
-    * Do not invent product names, prices, availability, or specifications.
-    * If the tool returns products, summarize the most relevant results for the user.
-    * If the tool returns empty, null, or no matching products, tell the user that no products were found.
-    * Never return an empty response after a tool call.
-    * Do not repeatedly call the same tool with the same search.
-    * Use previous conversation context when handling follow-up requests.
+you MUST use the "search_product" tool.
 
-    Prefer:
+Examples:
+"Show me headphones under £100"
+"Do you have running shoes?"
+"Which laptop is better?"
+"Find me a cheap Bluetooth speaker"
 
-    **Understand → Use tool if needed → Give answer**
+→ use search_product
 
-    rather than:
 
-    **Ask questions → Ask more questions → Use tool**
+2. KARTLY POLICY AND CUSTOMER SUPPORT QUESTIONS
+If the user asks about:
+- customer support
+- returns
+- refunds
+- delivery or shipping
+- cancellations
+- payment policies
+- privacy
+- warranties
+- complaints
+- terms and conditions
+- account support
+- other Kartly-specific rules or information
 
-`
-}]
+you MUST use the "search_knowledge" tool BEFORE answering.
+
+Examples:
+"Can I return my order?"
+"How long does a refund take?"
+"What is your customer support policy?"
+"Can I cancel an order?"
+"What happens if my product arrives damaged?"
+
+→ use search_knowledge
+
+Never answer Kartly-specific policies from your own general knowledge.
+Search the knowledge base first.
+
+
+3. ORDER QUESTIONS
+If an order-related tool is available, use it when the user asks about their
+specific order, delivery status, cancellation, or payment status.
+
+
+4. GENERAL CONVERSATION
+For greetings, casual conversation, and general questions that do not require
+Kartly-specific information, answer normally without using a tool.
+
+Examples:
+"Hello"
+"How are you?"
+"Thanks"
+
+→ answer normally.
+
+
+TOOL BEHAVIOUR
+
+- Use tools without asking unnecessary clarification questions.
+- Infer reasonable search terms from the user's message.
+- Do not invent products, prices, stock, specifications, policies, or order information.
+- If a tool returns relevant results, use those results to answer the user.
+- If search_product returns no products, clearly say that no matching products were found.
+- If search_knowledge returns no relevant information, clearly say that the requested information could not be found in the Kartly knowledge base.
+- Never produce an empty response after a tool call.
+- Never pretend that you called a tool when you did not.
+- Do not repeatedly call the same tool with the same query.
+- Use previous conversation messages to understand follow-up questions.
+
+For tool queries, rewrite the user's request into a short useful search query when appropriate.
+
+Preferred workflow:
+
+Understand request
+→ Decide whether a tool is required
+→ Call the appropriate tool
+→ Read the tool result
+→ Answer the user
+
+Do not ask unnecessary questions before using an appropriate tool.
+        `
+    }
+];
 
 router.post("/chat", async (req, res) => {
     const { messages, user_id, model_name } = req.body;
@@ -96,24 +176,57 @@ router.post("/chat", async (req, res) => {
         let response = await ollama.chat({
             model: model_name,
             messages: chatMessages,
-            thinking: false,
+            think: false,
             tools: [
                 {
                     type: "function",
-                    function: {
-                        name: "search_product",
-                        description: "Search for products in the database based on a search text also called while searching the price.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                searchText: {
-                                    type: "string",
-                                    description: "The text to search for in product names and descriptions."
-                                }
-                            },
-                            required: ["searchText"]
-                        }
-                    }
+    function: {
+        name: "search_knowledge",
+
+        description: `
+        Search Kartly's internal knowledge base.
+
+        Use this tool whenever the user asks about Kartly-specific information
+        that cannot be safely answered from general knowledge, including:
+
+        - customer support
+        - return policy
+        - refund policy
+        - shipping and delivery policy
+        - cancellations
+        - payment policy
+        - privacy policy
+        - terms and conditions
+        - warranty
+        - account support
+        - complaints
+        - store rules
+        - FAQs
+
+        Always search the knowledge base before answering these questions.
+        Do not invent Kartly policies.
+        `,
+
+        parameters: {
+            type: "object",
+
+            properties: {
+                query: {
+                    type: "string",
+                    description:
+                        "A concise semantic search query based on the user's question."
+                },
+
+                limit: {
+                    type: "integer",
+                    description:
+                        "Maximum number of matching knowledge chunks to return."
+                }
+            },
+
+            required: ["query"]
+        }
+    }
                 }
             ],
             stream: false
@@ -196,6 +309,21 @@ router.get("/history/:userId", (req, res) => {
         console.error("Error fetching chat history:", error);
         return res.status(500).json({
             message: "Error fetching chat history."
+        });
+    }
+});
+
+router.delete("/history", (req, res) => {
+    // const { userId } = req.params;
+
+    try {
+        // db.prepare("DELETE FROM chat_history WHERE user_id = ?").run(userId);
+        db.prepare("DELETE FROM chat_history").run(); // Delete all chat history for testing purposes
+        return res.status(200).json({ message: "Chat history deleted." });
+    } catch (error) {
+        console.error("Error deleting chat history:", error);
+        return res.status(500).json({
+            message: "Error deleting chat history."
         });
     }
 });
